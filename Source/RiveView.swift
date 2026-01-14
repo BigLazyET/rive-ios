@@ -67,7 +67,7 @@ open class RiveView: RiveRendererView {
 
     // MARK: Delegates
     @objc public weak var playerDelegate: RivePlayerDelegate?
-    public weak var stateMachineDelegate: RiveStateMachineDelegate?
+    @objc public weak var stateMachineDelegate: RiveStateMachineDelegate?
     
     // MARK: Debug
     private var fpsCounter: FPSCounterView? = nil

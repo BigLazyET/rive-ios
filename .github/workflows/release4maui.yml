@@ -1,4 +1,4 @@
-name: Create a Release
+name: Create a Release 4 Maui iOS Binding
 
 on:
   workflow_dispatch:

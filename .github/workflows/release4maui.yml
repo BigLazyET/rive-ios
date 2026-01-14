@@ -238,12 +238,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: PrivacyInfo.xcprivacy
-          path: Resources/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            RiveRuntime.xcframework.zip 
+            RiveRuntime.xcframework.zip
+            RiveRuntime.podspec
+            PrivacyInfo.xcprivacy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

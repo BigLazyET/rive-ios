@@ -15,6 +15,11 @@ jobs:
     outputs:
       checksum: ${{ steps.get_checksum.outputs.checksum }}
     steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -44,11 +49,15 @@ jobs:
           chmod a+x premake5
           cp premake5 bin/premake5
           sudo mv premake5 /usr/local/bin
-          pip3 install ply
+          python -m pip install --upgrade pip
+          python -m pip install ply
 
       - name: Add rive_build.sh to PATH
         shell: bash
         run: echo "${{ github.workspace }}/submodules/rive-runtime/build" >> $GITHUB_PATH
+
+      - name: Install all Xcode platforms
+        run: xcodebuild -downloadAllPlatforms
 
       - name: Build everything
         run: ./scripts/build.sh all release

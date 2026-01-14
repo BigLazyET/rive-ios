@@ -6,54 +6,58 @@ on:
       version:
         description: 'Release 版本号（例：v1.0.0）'
         required: true
+        type: string
 
 jobs:
   build_framework:
     name: Create RiveRuntime.xcframework ${{ github.event.inputs.version }}
-    runs-on: ghcr.io/cirruslabs/macos-runner:sonoma
+    runs-on: macos-14
     outputs:
-      checksum: ${{steps.get_checksum.outputs.checksum}}
+      checksum: ${{ steps.get_checksum.outputs.checksum }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Configure venv
+      - name: Set MARKETING_VERSION (strip leading v)
+        id: set_marketing_version
         run: |
-          python3 -m venv .venv
-          source .venv/bin/activate
-          echo PATH=$PATH >> $GITHUB_ENV
+          VERSION="${{ github.event.inputs.version }}"
+          CLEAN="${VERSION#v}"
+          echo "MARKETING_VERSION=$CLEAN" >> $GITHUB_ENV
+          echo "marketing_version=$CLEAN" >> $GITHUB_OUTPUT
 
-      - name: Add rive_build.sh to PATH
-        shell: bash
-        run: echo "${{github.workspace}}/submodules/rive-runtime/build" >> $GITHUB_PATH
+      - name: Setup Xcode 16.1
+        uses: maxim-lobanov/setup-xcode@v2
+        with:
+          xcode-version: '16.1'
 
       - name: Installing pre-requisites
         run: |
-          set -x
-          # Install some dependencies & premake5
-          brew install ninja
-          curl https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-macosx.tar.gz -L -o premake_macosx.tar.gz
+          set -euxo pipefail
+          brew install ninja || true
+          curl -L https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-macosx.tar.gz -o premake_macosx.tar.gz
           tar -xvf premake_macosx.tar.gz 2>/dev/null
           rm premake_macosx.tar.gz
-          mkdir bin
-          sudo chmod a+x premake5
+          mkdir -p bin
+          chmod a+x premake5
           cp premake5 bin/premake5
           sudo mv premake5 /usr/local/bin
           pip3 install ply
 
-      - name: Select Xcode 16.1
-        run: sudo xcodes select 16.1
-      
+      - name: Add rive_build.sh to PATH
+        shell: bash
+        run: echo "${{ github.workspace }}/submodules/rive-runtime/build" >> $GITHUB_PATH
+
       - name: Install all Xcode platforms
         run: xcodebuild -downloadAllPlatforms
 
-      - name: Build everything (using the cache, we should make an archive of course)
+      - name: Build everything
         run: ./scripts/build.sh all release
 
       - name: Update Marketing versions
-        run: agvtool new-marketing-version ${{ github.event.inputs.version }}
+        run: agvtool new-marketing-version "$MARKETING_VERSION"
 
       - name: Upload versionFiles
         uses: actions/upload-artifact@v4
@@ -70,43 +74,75 @@ jobs:
 
       - id: zip
         name: Zip the framework
-        # --symlinks is critical here to retain the structure of a macos framework.
-        run: zip --symlinks -r RiveRuntime.xcframework.zip RiveRuntime.xcframework
         working-directory: ./archive
+        run: zip --symlinks -r RiveRuntime.xcframework.zip RiveRuntime.xcframework
 
       - id: get_checksum
-        name: Add the checksum of the zip file into our environment
-        run: echo "::set-output name=checksum::$(swift package compute-checksum archive/RiveRuntime.xcframework.zip)"
+        name: Compute checksum
+        run: echo "checksum=$(swift package compute-checksum archive/RiveRuntime.xcframework.zip)" >> "$GITHUB_OUTPUT"
 
       - name: Upload xcFramework
         uses: actions/upload-artifact@v4
         with:
           name: RiveRuntime.xcframework.zip
           path: archive/RiveRuntime.xcframework.zip
-        
+
+      - id: read_podspec_template
+        uses: pCYSl5EDgo/cat@master
+        with:
+          path: .github/workflows/RiveRuntime.podspec.template
+
+      - name: Create RiveRuntime.podspec
+        env:
+          RELEASE_VERSION: ${{ steps.set_marketing_version.outputs.marketing_version }}
+          RELEASE_TAG: ${{ github.event.inputs.version }}
+        run: |
+          cat > RiveRuntime.podspec <<-EOF
+          ${{ steps.read_podspec_template.outputs.text }}
+          EOF
+
+      - name: Upload podspec file
+        uses: actions/upload-artifact@v4
+        with:
+          name: RiveRuntime.podspec
+          path: RiveRuntime.podspec
+
+      - name: Upload PrivacyInfo file
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrivacyInfo.xcprivacy
+          path: Resources/PrivacyInfo.xcprivacy
+
   publish_release:
     name: Publish framework
     runs-on: macos-14
     needs: [build_framework]
+    permissions:
+      contents: write
     steps:
       - name: Download framework artifact
         uses: actions/download-artifact@v4
         with:
           name: RiveRuntime.xcframework.zip
+          path: .
 
       - name: Download podspec file
         uses: actions/download-artifact@v4
         with:
           name: RiveRuntime.podspec
+          path: .
 
       - name: Download PrivacyInfo file
         uses: actions/download-artifact@v4
         with:
           name: PrivacyInfo.xcprivacy
+          path: .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: RiveRuntime ${{ github.event.inputs.version }}
           files: |
             RiveRuntime.xcframework.zip
             RiveRuntime.podspec

@@ -3,54 +3,14 @@ name: Create a Release 4 Maui iOS Binding
 on:
   workflow_dispatch:
     inputs:
-      major:
-        description: "Major"
-        type: boolean
-        default: false
-      minor:
-        description: "Minor"
-        type: boolean
-        default: false
+      version:
+        description: 'Release 版本号（例：v1.0.0）'
+        required: true
 
 jobs:
-  determine_version:
-    name: Determine the next build version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.echo_version.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_GITHUB }}
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: ./.github/release
-
-      - if: ${{ inputs.major == true }}
-        id: determine_version_major
-        name: Get Version - MAJOR
-        run: npm run release -- major --ci --release-version | tail -n 1 > RELEASE_VERSION
-        working-directory: ./.github/release
-      - if: ${{inputs.major == false && inputs.minor == true}}
-        id: determine_version_minor
-        name: Get Version - MINOR
-        run: npm run release -- minor --ci --release-version | tail -n 1 > RELEASE_VERSION
-        working-directory: ./.github/release
-      - if: ${{ inputs.major == false && inputs.minor == false }}
-        id: determine_version_patch
-        name: Get Version - PATCH
-        run: npm run release -- --ci --release-version | tail -n 1 > RELEASE_VERSION
-        working-directory: ./.github/release
-
-      - id: echo_version
-        run: echo "::set-output name=version::$(cat ./.github/release/RELEASE_VERSION)"
-
   build_framework:
-    name: Create RiveRuntime.xcframework
+    name: Create RiveRuntime.xcframework ${{ github.event.inputs.version }}
     runs-on: ghcr.io/cirruslabs/macos-runner:sonoma
-    needs: [determine_version]
     outputs:
       checksum: ${{steps.get_checksum.outputs.checksum}}
     steps:
@@ -58,7 +18,6 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: true
-          token: ${{ secrets.PAT_GITHUB }}
 
       - name: Configure venv
         run: |
@@ -94,7 +53,7 @@ jobs:
         run: ./scripts/build.sh all release
 
       - name: Update Marketing versions
-        run: agvtool new-marketing-version ${{ needs.determine_version.outputs.version }}
+        run: agvtool new-marketing-version ${{ github.event.inputs.version }}
 
       - name: Upload versionFiles
         uses: actions/upload-artifact@v4
@@ -124,105 +83,11 @@ jobs:
         with:
           name: RiveRuntime.xcframework.zip
           path: archive/RiveRuntime.xcframework.zip
-
-  do_release:
-    name: Do the actual release
-    runs-on: ubuntu-latest
-    needs: [determine_version, build_framework]
-    permissions:
-      id-token: write
-      contents: write # allows release-it to pick up GITHUB_TOKEN
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.PAT_GITHUB }}
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: ./.github/release
-
-      - id: read_package_template
-        uses: pCYSl5EDgo/cat@master
-        with:
-          path: .github/workflows/Package.swift.template
-
-      - name: Create Package.swift
-        run: |
-          cat > Package.swift <<-EOF
-          ${{ steps.read_package_template.outputs.text }}
-          EOF
-        env:
-          CHECKSUM: ${{ needs.build_framework.outputs.checksum }}
-          RELEASE_VERSION: ${{ needs.determine_version.outputs.version }}
-
-      - id: read_podspec_template
-        uses: pCYSl5EDgo/cat@master
-        with:
-          path: .github/workflows/RiveRuntime.podspec.template
-
-      - name: Create RiveRuntime.podspec
-        run: |
-          cat > RiveRuntime.podspec <<-EOF
-          ${{ steps.read_podspec_template.outputs.text }}
-          EOF
-        env:
-          RELEASE_VERSION: ${{ needs.determine_version.outputs.version }}
-
-      - name: Upload podspec file
-        uses: actions/upload-artifact@v4
-        with:
-          name: RiveRuntime.podspec
-          path: RiveRuntime.podspec
-      - name: Upload PrivacyInfo file
-        uses: actions/upload-artifact@v4
-        with:
-          name: PrivacyInfo.xcprivacy
-          path: Resources/
-
-      - name: Git config
-        run: |
-          git config --local user.email 'hello@rive.app'
-          git config --local user.name ${{ github.actor }}
-
-      - name: Download versionFiles
-        uses: actions/download-artifact@v4
-        with:
-          name: version-files
-
-      - name: Add & commit version files (might want to look into doing this in release-it)
-        run: git add RiveRuntime.podspec Package.swift Source/Info.plist Tests/Info.plist && git commit -m "Updating version files"
-
-      - name: Download framework artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: RiveRuntime.xcframework.zip
-          path: archive/
-
-      - if: ${{ inputs.major == true }}
-        name: Major Release - Bump version number, update changelog, push and tag
-        run: npm run release -- major --ci
-        working-directory: ./.github/release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: ${{inputs.major == false && inputs.minor == true}}
-        name: Minor release - Bump version number, update changelog, push and tag
-        run: npm run release -- minor --ci
-        working-directory: ./.github/release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: ${{inputs.major == false && inputs.minor == false}}
-        name: Build release - Bump version number, update changelog, push and tag
-        run: npm run release -- --ci
-        working-directory: ./.github/release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
   publish_release:
-    name: Publish framework to cocoapods
+    name: Publish framework
     runs-on: macos-14
-    needs: [determine_version, build_framework, do_release]
+    needs: [build_framework]
     steps:
       - name: Download framework artifact
         uses: actions/download-artifact@v4
